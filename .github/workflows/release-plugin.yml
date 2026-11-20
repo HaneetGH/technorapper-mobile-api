@@ -23,7 +23,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          VERSION="$(sed -n 's/^ \\* Version: \\([^ ]*\\).*/\\1/p' technorapper-mobile-api.php | head -n1)"
+          VERSION="$(grep -E '^[[:space:]]*\\* Version:' technorapper-mobile-api.php | head -n1 | sed -E 's/.*Version:[[:space:]]*([^[:space:]]+).*/\\1/')"
           if [ -z "$VERSION" ]; then
             echo "Unable to read plugin version"
             exit 1
