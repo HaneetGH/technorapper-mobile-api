@@ -1,0 +1,76 @@
+name: Release Plugin
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Tag and package plugin
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read plugin version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(sed -n 's/^ \\* Version: \\([^ ]*\\).*/\\1/p' technorapper-mobile-api.php | head -n1)"
+          if [ -z "$VERSION" ]; then
+            echo "Unable to read plugin version"
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether tag already exists
+        id: tag
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "${{ steps.version.outputs.tag }} already exists; nothing to release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build plugin ZIP
+        if: ${{ steps.tag.outputs.exists == 'false' }}
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PACKAGE="technorapper-mobile-api-v${VERSION}"
+
+          mkdir -p "dist/${PACKAGE}/technorapper-mobile-api"
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='docs' \
+            --exclude='composer.json' \
+            --exclude='phpunit.xml*' \
+            ./ "dist/${PACKAGE}/technorapper-mobile-api/"
+
+          rm -rf "dist/${PACKAGE}/technorapper-mobile-api/dist"
+          cd dist
+          zip -r "${PACKAGE}.zip" "${PACKAGE}"
+
+      - name: Create GitHub Release
+        if: ${{ steps.tag.outputs.exists == 'false' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            "dist/technorapper-mobile-api-${{ steps.version.outputs.version }}.zip" \
+            --title "TechnoRapper Mobile API ${{ steps.version.outputs.tag }}" \
+            --generate-notes
