@@ -71,6 +71,6 @@ jobs:
         shell: bash
         run: |
           gh release create "${{ steps.version.outputs.tag }}" \
-            "dist/technorapper-mobile-api-${{ steps.version.outputs.tag#v }}.zip" \
+            "dist/technorapper-mobile-api-${{ steps.version.outputs.version }}.zip" \
             --title "TechnoRapper Mobile API ${{ steps.version.outputs.tag }}" \
             --generate-notes
