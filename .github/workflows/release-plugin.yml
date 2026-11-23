@@ -56,6 +56,7 @@ jobs:
           rsync -a \
             --exclude='.git' \
             --exclude='.github' \
+            --exclude='.cursor' \
             --exclude='docs' \
             --exclude='composer.json' \
             --exclude='phpunit.xml*' \
@@ -72,6 +73,6 @@ jobs:
         shell: bash
         run: |
           gh release create "${{ steps.version.outputs.tag }}" \
-            "dist/technorapper-mobile-api-${{ steps.version.outputs.version }}.zip" \
+            "dist/technorapper-mobile-api-v${{ steps.version.outputs.version }}.zip" \
             --title "TechnoRapper Mobile API ${{ steps.version.outputs.tag }}" \
             --generate-notes
