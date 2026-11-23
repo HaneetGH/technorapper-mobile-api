@@ -1,0 +1,14 @@
+---
+description: TechnoRapper Mobile API auth and abuse controls must stay fail-closed
+alwaysApply: true
+---
+
+# Mobile API auth
+
+- Content GET routes require `Authorization: Bearer` only. Never accept `X-TR-App-Key` on content routes.
+- Only `POST /auth/token` may use `X-TR-App-Key` to mint short-lived tokens.
+- If `tr_mobile_app_key` is empty, the API must fail closed (`503`). Do not restore open-by-default access.
+- Keep page/limit caps (`limit` ≤ 20, posts page ≤ 50, search page ≤ 10). Do not remove without an equivalent abuse control.
+- Do not run `the_content` on API bodies; keep `wp_kses_post` (or tighter) for mobile HTML.
+- Password-protected posts must not appear in list/detail/search.
+- Origin rate limiting is best-effort; document Cloudflare as the real DDoS control. Do not claim the App Key makes clone apps impossible.
