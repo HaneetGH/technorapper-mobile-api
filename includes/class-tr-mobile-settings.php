@@ -6,6 +6,7 @@ final class TR_Mobile_Settings {
         add_action('admin_menu', [__CLASS__, 'menu']);
         add_action('admin_init', [__CLASS__, 'register']);
         add_action('admin_notices', [__CLASS__, 'notice_if_unconfigured']);
+        add_action('admin_post_tr_mobile_generate_token', [__CLASS__, 'handle_generate']);
         add_action('admin_post_tr_mobile_revoke_install', [__CLASS__, 'handle_revoke']);
         add_action('admin_post_tr_mobile_reactivate_install', [__CLASS__, 'handle_reactivate']);
     }
@@ -21,11 +22,6 @@ final class TR_Mobile_Settings {
     }
 
     public static function register(): void {
-        register_setting('tr_mobile_api', TR_Mobile_Auth::OPTION_APP_KEY, [
-            'type' => 'string',
-            'sanitize_callback' => [__CLASS__, 'sanitize_app_key'],
-            'default' => '',
-        ]);
         register_setting('tr_mobile_api', 'tr_mobile_min_app_version', [
             'type' => 'string',
             'sanitize_callback' => 'sanitize_text_field',
@@ -36,14 +32,6 @@ final class TR_Mobile_Settings {
             'sanitize_callback' => [__CLASS__, 'sanitize_ttl'],
             'default' => 3600,
         ]);
-    }
-
-    public static function sanitize_app_key($value): string {
-        $value = trim((string) $value);
-        if ($value === '') {
-            return '';
-        }
-        return sanitize_text_field($value);
     }
 
     public static function sanitize_ttl($value): int {
@@ -63,8 +51,21 @@ final class TR_Mobile_Settings {
             return;
         }
         echo '<div class="notice notice-warning"><p>';
-        echo esc_html__('TechnoRapper Mobile API is fail-closed until you set an App Key under Settings → TR Mobile API.', 'technorapper-mobile-api');
+        echo esc_html__('TechnoRapper Mobile API needs a Mobile API Token. Open Settings → TR Mobile API and click Generate.', 'technorapper-mobile-api');
         echo '</p></div>';
+    }
+
+    public static function handle_generate(): void {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('Forbidden', 'technorapper-mobile-api'));
+        }
+        check_admin_referer('tr_mobile_generate_token');
+        TR_Mobile_Auth::generate_mobile_token();
+        wp_safe_redirect(add_query_arg([
+            'page' => 'tr-mobile-api',
+            'tr_notice' => 'generated',
+        ], admin_url('options-general.php')));
+        exit;
     }
 
     public static function handle_revoke(): void {
@@ -110,36 +111,60 @@ final class TR_Mobile_Settings {
         $page = isset($_GET['install_page']) ? max(1, (int) $_GET['install_page']) : 1;
         $list = TR_Mobile_Installs::list($page, 20, $status_filter);
         $pages = max(1, (int) ceil($list['total'] / 20));
+        $notice = isset($_GET['tr_notice']) ? sanitize_key((string) $_GET['tr_notice']) : '';
         ?>
         <div class="wrap">
             <h1><?php echo esc_html__('TechnoRapper Mobile API', 'technorapper-mobile-api'); ?></h1>
-            <?php if (!empty($_GET['tr_notice'])): ?>
-                <div class="notice notice-success is-dismissible"><p>
-                    <?php
-                    echo esc_html(
-                        $_GET['tr_notice'] === 'reactivated'
-                            ? __('Install reactivated.', 'technorapper-mobile-api')
-                            : __('Install revoked.', 'technorapper-mobile-api')
-                    );
-                    ?>
-                </p></div>
+            <?php if ($notice === 'generated'): ?>
+                <div class="notice notice-success is-dismissible"><p><?php echo esc_html__('Mobile API Token generated. Copy it into your mobile app now.', 'technorapper-mobile-api'); ?></p></div>
+            <?php elseif ($notice === 'revoked'): ?>
+                <div class="notice notice-success is-dismissible"><p><?php echo esc_html__('Install revoked.', 'technorapper-mobile-api'); ?></p></div>
+            <?php elseif ($notice === 'reactivated'): ?>
+                <div class="notice notice-success is-dismissible"><p><?php echo esc_html__('Install reactivated.', 'technorapper-mobile-api'); ?></p></div>
             <?php endif; ?>
-            <p><?php echo esc_html__('Each device registers once, then mints short-lived Bearer tokens. Revoke an install to cut off a compromised or abusive client.', 'technorapper-mobile-api'); ?></p>
+
+            <h2><?php echo esc_html__('Mobile API Token', 'technorapper-mobile-api'); ?></h2>
+            <p><?php echo esc_html__('Click Generate. The plugin creates the token (like GitHub). Put that token in your mobile app and send it as Authorization: Bearer on every content request.', 'technorapper-mobile-api'); ?></p>
+
+            <table class="form-table" role="presentation">
+                <tr>
+                    <th scope="row"><label for="tr_mobile_api_token"><?php echo esc_html__('Token', 'technorapper-mobile-api'); ?></label></th>
+                    <td>
+                        <input type="text" id="tr_mobile_api_token" class="large-text code" readonly value="<?php echo esc_attr($app_key); ?>" onclick="this.select();" autocomplete="off" />
+                        <p class="description">
+                            <?php if ($app_key === ''): ?>
+                                <?php echo esc_html__('No token yet. Click Generate Mobile API Token.', 'technorapper-mobile-api'); ?>
+                            <?php else: ?>
+                                <?php echo esc_html__('Click the field to select, then copy. Regenerating replaces the old token and will break apps still using it.', 'technorapper-mobile-api'); ?>
+                            <?php endif; ?>
+                        </p>
+                        <p>
+                            <a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(
+                                admin_url('admin-post.php?action=tr_mobile_generate_token'),
+                                'tr_mobile_generate_token'
+                            )); ?>" onclick="return confirm('<?php echo esc_js($app_key === ''
+                                ? __('Generate a new Mobile API Token?', 'technorapper-mobile-api')
+                                : __('Regenerate token? The current token will stop working in the mobile app.', 'technorapper-mobile-api')
+                            ); ?>');">
+                                <?php echo esc_html($app_key === '' ? __('Generate Mobile API Token', 'technorapper-mobile-api') : __('Regenerate Mobile API Token', 'technorapper-mobile-api')); ?>
+                            </a>
+                        </p>
+                        <?php if ($app_key !== ''): ?>
+                            <p><code>Authorization: Bearer <?php echo esc_html($app_key); ?></code></p>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            </table>
+
             <form method="post" action="options.php">
                 <?php settings_fields('tr_mobile_api'); ?>
+                <h2><?php echo esc_html__('Optional settings', 'technorapper-mobile-api'); ?></h2>
                 <table class="form-table" role="presentation">
                     <tr>
-                        <th scope="row"><label for="tr_mobile_app_key"><?php echo esc_html__('App Key', 'technorapper-mobile-api'); ?></label></th>
-                        <td>
-                            <input name="<?php echo esc_attr(TR_Mobile_Auth::OPTION_APP_KEY); ?>" type="text" id="tr_mobile_app_key" value="<?php echo esc_attr($app_key); ?>" class="regular-text" autocomplete="off" />
-                            <p class="description"><?php echo esc_html__('Required for POST /auth/register only. Embed in the official app build.', 'technorapper-mobile-api'); ?></p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row"><label for="tr_mobile_token_ttl"><?php echo esc_html__('Token TTL (seconds)', 'technorapper-mobile-api'); ?></label></th>
+                        <th scope="row"><label for="tr_mobile_token_ttl"><?php echo esc_html__('Install token TTL (seconds)', 'technorapper-mobile-api'); ?></label></th>
                         <td>
                             <input name="<?php echo esc_attr(TR_Mobile_Auth::OPTION_TOKEN_TTL); ?>" type="number" id="tr_mobile_token_ttl" value="<?php echo esc_attr((string) $ttl); ?>" min="300" max="86400" class="small-text" />
-                            <p class="description"><?php echo esc_html__('300–86400. Default 3600.', 'technorapper-mobile-api'); ?></p>
+                            <p class="description"><?php echo esc_html__('Only for advanced per-install short-lived tokens. 300–86400. Default 3600.', 'technorapper-mobile-api'); ?></p>
                         </td>
                     </tr>
                     <tr>
@@ -149,11 +174,20 @@ final class TR_Mobile_Settings {
                         </td>
                     </tr>
                 </table>
-                <?php submit_button(); ?>
+                <?php submit_button(__('Save optional settings', 'technorapper-mobile-api')); ?>
             </form>
 
             <hr />
-            <h2><?php echo esc_html__('Registered installs', 'technorapper-mobile-api'); ?></h2>
+            <h2><?php echo esc_html__('App usage (simple)', 'technorapper-mobile-api'); ?></h2>
+            <ol>
+                <li><?php echo esc_html__('Generate Mobile API Token above.', 'technorapper-mobile-api'); ?></li>
+                <li><?php echo esc_html__('Put the token in the mobile app.', 'technorapper-mobile-api'); ?></li>
+                <li><code>GET /wp-json/technorapper/v1/posts</code> with header <code>Authorization: Bearer &lt;token&gt;</code></li>
+            </ol>
+
+            <hr />
+            <h2><?php echo esc_html__('Registered installs (advanced)', 'technorapper-mobile-api'); ?></h2>
+            <p><?php echo esc_html__('Optional per-device credentials via /auth/register. Use when you need to revoke one phone without regenerating the shared Mobile API Token.', 'technorapper-mobile-api'); ?></p>
             <p>
                 <a href="<?php echo esc_url(admin_url('options-general.php?page=tr-mobile-api')); ?>"><?php echo esc_html__('All', 'technorapper-mobile-api'); ?></a>
                 |
@@ -219,14 +253,6 @@ final class TR_Mobile_Settings {
                     <?php endfor; ?>
                 </p>
             <?php endif; ?>
-
-            <hr />
-            <h2><?php echo esc_html__('App usage', 'technorapper-mobile-api'); ?></h2>
-            <ol>
-                <li><code>POST /wp-json/technorapper/v1/auth/register</code> with header <code>X-TR-App-Key</code> → store <code>install_id</code> + <code>install_secret</code></li>
-                <li><code>POST /wp-json/technorapper/v1/auth/token</code> with JSON <code>install_id</code> + <code>install_secret</code></li>
-                <li>All content routes: <code>Authorization: Bearer &lt;access_token&gt;</code></li>
-            </ol>
         </div>
         <?php
     }
