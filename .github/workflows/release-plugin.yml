@@ -50,21 +50,27 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          PACKAGE="technorapper-mobile-api-v${VERSION}"
+          # WordPress requires plugin PHP one level under the zip root:
+          # technorapper-mobile-api/technorapper-mobile-api.php
+          # (not technorapper-mobile-api-vX/technorapper-mobile-api/...)
+          PLUGIN_DIR="technorapper-mobile-api"
+          ZIP_NAME="technorapper-mobile-api-v${VERSION}.zip"
 
-          mkdir -p "dist/${PACKAGE}/technorapper-mobile-api"
+          rm -rf "dist/${PLUGIN_DIR}" "dist/${ZIP_NAME}"
+          mkdir -p "dist/${PLUGIN_DIR}"
           rsync -a \
             --exclude='.git' \
             --exclude='.github' \
             --exclude='.cursor' \
             --exclude='docs' \
+            --exclude='dist' \
             --exclude='composer.json' \
             --exclude='phpunit.xml*' \
-            ./ "dist/${PACKAGE}/technorapper-mobile-api/"
+            ./ "dist/${PLUGIN_DIR}/"
 
-          rm -rf "dist/${PACKAGE}/technorapper-mobile-api/dist"
           cd dist
-          zip -r "${PACKAGE}.zip" "${PACKAGE}"
+          zip -r "${ZIP_NAME}" "${PLUGIN_DIR}"
+          unzip -l "${ZIP_NAME}" | head -n 20
 
       - name: Create GitHub Release
         if: ${{ steps.tag.outputs.exists == 'false' }}
