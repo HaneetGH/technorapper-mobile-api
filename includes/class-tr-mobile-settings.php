@@ -19,6 +19,14 @@ final class TR_Mobile_Settings {
             'tr-mobile-api',
             [__CLASS__, 'render']
         );
+        add_submenu_page(
+            'options-general.php',
+            'Mobile API Docs',
+            'TR Mobile API Docs',
+            'manage_options',
+            'tr-mobile-api-docs',
+            ['TR_Mobile_Docs', 'render_admin_page']
+        );
     }
 
     public static function register(): void {
@@ -184,6 +192,12 @@ final class TR_Mobile_Settings {
                 <li><?php echo esc_html__('Put the token in the mobile app.', 'technorapper-mobile-api'); ?></li>
                 <li><code>GET /wp-json/technorapper/v1/posts</code> with header <code>Authorization: Bearer &lt;token&gt;</code></li>
             </ol>
+            <p>
+                <a class="button button-secondary" href="<?php echo esc_url(admin_url('options-general.php?page=tr-mobile-api-docs')); ?>">
+                    <?php echo esc_html__('Open full API documentation', 'technorapper-mobile-api'); ?>
+                </a>
+                <span class="description"> <?php echo esc_html__('Endpoints, JSON samples, curl for technorapper.com, Postman.', 'technorapper-mobile-api'); ?></span>
+            </p>
 
             <hr />
             <h2><?php echo esc_html__('Registered installs (advanced)', 'technorapper-mobile-api'); ?></h2>

@@ -62,11 +62,13 @@ jobs:
             --exclude='.git' \
             --exclude='.github' \
             --exclude='.cursor' \
-            --exclude='docs' \
+            --exclude='docs/ARCHITECTURE.md' \
+            --exclude='docs/SECURITY.md' \
             --exclude='dist' \
             --exclude='composer.json' \
             --exclude='phpunit.xml*' \
             ./ "dist/${PLUGIN_DIR}/"
+          # Keep docs/API.md in the zip for in-plugin documentation.
 
           cd dist
           zip -r "${ZIP_NAME}" "${PLUGIN_DIR}"

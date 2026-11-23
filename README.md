@@ -2,7 +2,9 @@
 
 First-party WordPress plugin providing the stable, read-only API contract for the TechnoRapper Android/iOS app.
 
-**Version:** 0.3.1
+**Version:** 0.3.2
+
+**API reference:** [docs/API.md](docs/API.md) (also under **Settings → TR Mobile API Docs** in WordPress)
 
 ## Auth (simple — recommended)
 
