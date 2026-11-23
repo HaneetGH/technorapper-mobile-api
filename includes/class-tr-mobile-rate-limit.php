@@ -19,7 +19,9 @@ final class TR_Mobile_Rate_Limit {
         $key = 'tr_api_rl_' . md5($ip . '|' . $bucket);
         $count = (int) get_transient($key);
 
-        if (str_contains($route, '/auth/token')) {
+        if (str_contains($route, '/auth/register')) {
+            $limit = 5;
+        } elseif (str_contains($route, '/auth/token')) {
             $limit = 10;
         } elseif (str_contains($route, '/search')) {
             $limit = 20;

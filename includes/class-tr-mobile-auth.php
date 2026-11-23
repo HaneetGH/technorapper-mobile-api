@@ -2,10 +2,10 @@
 if (!defined('ABSPATH')) exit;
 
 /**
- * App-key bootstrap + short-lived Bearer access tokens.
- *
- * Content routes require Authorization: Bearer <token>.
- * Only POST /auth/token accepts X-TR-App-Key to mint tokens.
+ * Auth flow:
+ * 1) POST /auth/register + X-TR-App-Key → install_id + install_secret (once)
+ * 2) POST /auth/token with install credentials → short-lived Bearer (includes iid)
+ * 3) Content GETs require Authorization: Bearer
  */
 final class TR_Mobile_Auth {
     public const HEADER_APP_KEY = 'X-TR-App-Key';
@@ -18,23 +18,54 @@ final class TR_Mobile_Auth {
     private const MAX_TTL = 86400;
 
     /**
-     * Mint a token. Requires a configured app key matching X-TR-App-Key.
+     * @return array|WP_Error
+     */
+    public static function register_install(WP_REST_Request $request) {
+        $gate = self::require_app_key($request);
+        if (is_wp_error($gate)) {
+            return $gate;
+        }
+
+        $created = TR_Mobile_Installs::register([
+            'platform' => (string) $request->get_param('platform'),
+            'app_version' => (string) $request->get_param('app_version'),
+            'device_label' => (string) $request->get_param('device_label'),
+        ]);
+        if (is_wp_error($created)) {
+            return $created;
+        }
+
+        return [
+            'install_id' => $created['install_id'],
+            'install_secret' => $created['install_secret'],
+            'token_path' => '/' . TR_MOBILE_API_NAMESPACE . '/auth/token',
+            'note' => 'Store install_secret securely. It is shown only once. Revoke from WP admin if compromised.',
+        ];
+    }
+
+    /**
+     * Mint a token using install_id + install_secret (JSON body or params).
      *
      * @return array|WP_Error
      */
     public static function issue_token(WP_REST_Request $request) {
-        $configured = self::configured_app_key();
-        if ($configured === '') {
+        if (self::configured_app_key() === '') {
+            return self::not_configured();
+        }
+
+        $install_id = trim((string) ($request->get_param('install_id') ?: ''));
+        $install_secret = (string) ($request->get_param('install_secret') ?: '');
+        if ($install_id === '' || $install_secret === '') {
             return new WP_Error(
-                'tr_not_configured',
-                'Mobile API is not configured. Set tr_mobile_app_key before use.',
-                ['status' => 503]
+                'tr_unauthorized',
+                'install_id and install_secret are required.',
+                ['status' => 401]
             );
         }
 
-        $provided = (string) $request->get_header(self::HEADER_APP_KEY);
-        if ($provided === '' || !hash_equals($configured, $provided)) {
-            return new WP_Error('tr_unauthorized', 'Invalid app credentials.', ['status' => 401]);
+        $verified = TR_Mobile_Installs::verify_credentials($install_id, $install_secret);
+        if (is_wp_error($verified)) {
+            return $verified;
         }
 
         $ttl = self::token_ttl();
@@ -44,6 +75,7 @@ final class TR_Mobile_Auth {
             'iat' => $now,
             'exp' => $now + $ttl,
             'jti' => wp_generate_password(16, false, false),
+            'iid' => $install_id,
         ];
 
         $token = self::encode_token($payload);
@@ -56,6 +88,7 @@ final class TR_Mobile_Auth {
             'token_type' => 'Bearer',
             'expires_in' => $ttl,
             'expires_at' => gmdate('c', $payload['exp']),
+            'install_id' => $install_id,
         ];
     }
 
@@ -66,11 +99,7 @@ final class TR_Mobile_Auth {
      */
     public static function authenticate(WP_REST_Request $request) {
         if (self::configured_app_key() === '') {
-            return new WP_Error(
-                'tr_not_configured',
-                'Mobile API is not configured. Set tr_mobile_app_key before use.',
-                ['status' => 503]
-            );
+            return self::not_configured();
         }
 
         $token = self::bearer_token($request);
@@ -87,6 +116,31 @@ final class TR_Mobile_Auth {
             return $payload;
         }
 
+        $install_id = (string) ($payload['iid'] ?? '');
+        if ($install_id === '') {
+            return new WP_Error('tr_unauthorized', 'Access token missing install claim.', ['status' => 401]);
+        }
+
+        $active = TR_Mobile_Installs::assert_active($install_id);
+        if (is_wp_error($active)) {
+            return $active;
+        }
+
+        return true;
+    }
+
+    /**
+     * @return true|WP_Error
+     */
+    public static function require_app_key(WP_REST_Request $request) {
+        $configured = self::configured_app_key();
+        if ($configured === '') {
+            return self::not_configured();
+        }
+        $provided = (string) $request->get_header(self::HEADER_APP_KEY);
+        if ($provided === '' || !hash_equals($configured, $provided)) {
+            return new WP_Error('tr_unauthorized', 'Invalid app credentials.', ['status' => 401]);
+        }
         return true;
     }
 
@@ -107,6 +161,14 @@ final class TR_Mobile_Auth {
         $secret = wp_generate_password(64, true, true);
         update_option(self::OPTION_TOKEN_SECRET, $secret, false);
         return $secret;
+    }
+
+    private static function not_configured(): WP_Error {
+        return new WP_Error(
+            'tr_not_configured',
+            'Mobile API is not configured. Set tr_mobile_app_key before use.',
+            ['status' => 503]
+        );
     }
 
     private static function bearer_token(WP_REST_Request $request): string {
