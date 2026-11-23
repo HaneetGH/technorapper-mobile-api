@@ -2,35 +2,33 @@
 
 First-party WordPress plugin providing the stable, read-only API contract for the TechnoRapper Android/iOS app.
 
-**Version:** 0.3.2
+**Version:** 0.4.0
 
-**API reference:** [docs/API.md](docs/API.md) (also under **Settings → TR Mobile API Docs** in WordPress)
+**API reference:** [docs/API.md](docs/API.md) (also under **Settings → TR Mobile API Docs** in WordPress)  
+**Security:** [docs/SECURITY.md](docs/SECURITY.md)
 
-## Auth (simple — recommended)
+## Auth (production — app-only)
 
-Like GitHub: **the plugin creates the token**. You copy it into the mobile app.
-
-1. Activate the plugin.
-2. **Settings → TR Mobile API → Generate Mobile API Token**.
-3. Copy the token into the app.
-4. Call content routes with:
+1. Activate the plugin and **Generate Mobile API Token** (fail-closed server secret).
+2. Configure package allowlist, Play Integrity / App Attest credentials.
+3. Turn **ON** Require attestation; turn **OFF** Accept shared Bearer.
+4. Mobile app flow:
 
 ```http
-Authorization: Bearer tr_mob_…
+GET  /auth/challenge
+POST /auth/register   # nonce + Play Integrity / App Attest
+POST /auth/token      # install_id + install_secret → JWT
+GET  /posts           # Authorization: Bearer <install JWT>
 ```
 
-Until a token is generated, the API returns `503`.
+Until a Mobile API Token is generated, the API returns `503`.
 
-Regenerating the token invalidates the previous one (update the app).
+## Staging
 
-## Optional advanced (per-device)
+- Leave `accept_shared_bearer` on to use `Authorization: Bearer tr_mob_…`, **or**
+- Set staging IP allowlist so emulators can register with `X-TR-App-Key` + nonce (no Integrity).
 
-For revoke-one-phone without rotating the shared token:
-
-1. `POST /auth/register` with `X-TR-App-Key: <same Mobile API Token>`
-2. Store `install_id` + `install_secret`
-3. `POST /auth/token` → short-lived Bearer
-4. Revoke installs in **Settings → TR Mobile API**
+Do not ship `tr_mob_…` in store builds once attestation register ships.
 
 ## API
 
@@ -38,26 +36,28 @@ Base path: `/wp-json/technorapper/v1/`
 
 | Method | Path | Auth |
 |--------|------|------|
-| `GET` | `/config` | Bearer (mobile token or install JWT) |
+| `GET` | `/auth/challenge` | none (rate-limited) |
+| `POST` | `/auth/register` | attestation (or staging app key) |
+| `POST` | `/auth/token` | install credentials (+ optional attestation) |
+| `GET` | `/config` | Bearer |
 | `GET` | `/desks` | Bearer |
-| `GET` | `/home?limit=20` | Bearer |
+| `GET` | `/home` | Bearer |
+| `GET` | `/pulse` | Bearer |
 | `GET` | `/posts?page=1&limit=20&desk=ai` | Bearer |
 | `GET` | `/posts/{id}` | Bearer |
 | `GET` | `/search?q=android&page=1&limit=20` | Bearer |
-| `POST` | `/auth/register` | `X-TR-App-Key` (advanced) |
-| `POST` | `/auth/token` | install credentials (advanced) |
 
-Limits: `limit` ≤ 20; `/posts` page ≤ 50; `/search` page ≤ 10; `q` 2–100 chars.
+Limits: `limit` ≤ 20; `/posts` page ≤ 50; `/search` page ≤ 10; `q` 2–100 chars; register 5/hour/IP.
 
 Prefer `api.technorapper.com/v1/` behind Cloudflare in production.
 
 ## Install
 
 1. Upload/activate the plugin.
-2. Generate Mobile API Token in settings.
-3. Put the token in the mobile app.
-4. Verify: `GET .../config` with `Authorization: Bearer <token>`.
+2. Generate Mobile API Token; configure app-only settings.
+3. Point the mobile app at challenge → register → token (store) or shared Bearer (staging).
+4. Verify: `GET .../config` with a valid Bearer.
 
 ## Important
 
-WordPress remains the content origin. Cloudflare handles DDoS. The generated token is powerful—treat a leak as regenerate + update the app.
+WordPress remains the content origin. Cloudflare handles DDoS. Shared tokens and install secrets are powerful—revoke installs surgically; regenerate the shared token only when staging credentials leak.

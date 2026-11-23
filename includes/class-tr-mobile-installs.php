@@ -6,7 +6,7 @@ if (!defined('ABSPATH')) exit;
  * Plaintext install_secret is shown once at registration; only the hash is stored.
  */
 final class TR_Mobile_Installs {
-    public const DB_VERSION = 1;
+    public const DB_VERSION = 2;
     public const OPTION_DB_VERSION = 'tr_mobile_installs_db_version';
     public const STATUS_ACTIVE = 'active';
     public const STATUS_REVOKED = 'revoked';
@@ -38,6 +38,9 @@ final class TR_Mobile_Installs {
             platform varchar(32) NOT NULL DEFAULT '',
             app_version varchar(32) NOT NULL DEFAULT '',
             device_label varchar(191) NOT NULL DEFAULT '',
+            package_name varchar(191) NOT NULL DEFAULT '',
+            attest_key_id varchar(255) NOT NULL DEFAULT '',
+            attest_public_key text NULL,
             created_at datetime NOT NULL,
             last_seen_at datetime DEFAULT NULL,
             last_ip varchar(45) NOT NULL DEFAULT '',
@@ -58,11 +61,20 @@ final class TR_Mobile_Installs {
         $platform = sanitize_key((string) ($meta['platform'] ?? ''));
         $app_version = sanitize_text_field((string) ($meta['app_version'] ?? ''));
         $device_label = sanitize_text_field((string) ($meta['device_label'] ?? ''));
+        $package_name = sanitize_text_field((string) ($meta['package_name'] ?? ''));
+        $attest_key_id = sanitize_text_field((string) ($meta['attest_key_id'] ?? ''));
+        $attest_public_key = (string) ($meta['attest_public_key'] ?? '');
         if (strlen($app_version) > 32) {
             $app_version = substr($app_version, 0, 32);
         }
         if (strlen($device_label) > 191) {
             $device_label = substr($device_label, 0, 191);
+        }
+        if (strlen($package_name) > 191) {
+            $package_name = substr($package_name, 0, 191);
+        }
+        if (strlen($attest_key_id) > 255) {
+            $attest_key_id = substr($attest_key_id, 0, 255);
         }
         if ($platform !== '' && !in_array($platform, ['android', 'ios', 'other'], true)) {
             $platform = 'other';
@@ -83,11 +95,14 @@ final class TR_Mobile_Installs {
                 'platform' => $platform,
                 'app_version' => $app_version,
                 'device_label' => $device_label,
+                'package_name' => $package_name,
+                'attest_key_id' => $attest_key_id,
+                'attest_public_key' => $attest_public_key !== '' ? $attest_public_key : null,
                 'created_at' => $now,
                 'last_seen_at' => $now,
                 'last_ip' => substr($ip, 0, 45),
             ],
-            ['%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s']
+            ['%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s']
         );
 
         if (!$inserted) {

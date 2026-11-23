@@ -5,11 +5,13 @@ alwaysApply: true
 
 # Mobile API auth
 
-- Primary UX: admin **Generate Mobile API Token**; mobile uses `Authorization: Bearer <token>` on content GETs.
-- Do not require register/install for the simple path. Keep per-install register/token as optional advanced revoke.
+- Production path: `GET /auth/challenge` → attested `POST /auth/register` → `POST /auth/token` → content GETs with short-lived install JWT (`iid`).
+- Production: `require_app_attestation=true`, `accept_shared_bearer=false`. Shared `tr_mob_…` is staging-only.
 - If no Mobile API Token (`tr_mobile_app_key`) is set, fail closed (`503`).
+- Compromising one phone → revoke that install only; do not force global key rotation for every user.
 - Content routes never accept raw secrets via query string.
-- Keep page/limit caps (`limit` ≤ 20, posts page ≤ 50, search page ≤ 10).
+- Keep page/limit caps (`limit` ≤ 20, posts page ≤ 50, search page ≤ 10); register ≤ 5/hour/IP.
 - Do not run `the_content` on API bodies; keep `wp_kses_post`.
 - Password-protected posts must not appear in list/detail/search.
-- Cloudflare is the real DDoS control. Do not claim the shared token makes clone apps impossible.
+- Cloudflare is the real DDoS control. Attestation stops casual clones; do not claim clone apps are impossible.
+- Keep attestation on free platform APIs only (Play Integrity + App Attest). No paid App Check / reCAPTCHA Enterprise / Approov. Default: Integrity on register only, not every `/auth/token`.

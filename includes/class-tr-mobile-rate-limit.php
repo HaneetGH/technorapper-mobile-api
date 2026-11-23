@@ -21,22 +21,34 @@ final class TR_Mobile_Rate_Limit {
 
         if (str_contains($route, '/auth/register')) {
             $limit = 5;
+            $window = HOUR_IN_SECONDS;
+            $retry = 3600;
+        } elseif (str_contains($route, '/auth/challenge')) {
+            $limit = 20;
+            $window = MINUTE_IN_SECONDS;
+            $retry = 60;
         } elseif (str_contains($route, '/auth/token')) {
             $limit = 10;
+            $window = MINUTE_IN_SECONDS;
+            $retry = 60;
         } elseif (str_contains($route, '/search')) {
             $limit = 20;
+            $window = MINUTE_IN_SECONDS;
+            $retry = 60;
         } else {
             $limit = 60;
+            $window = MINUTE_IN_SECONDS;
+            $retry = 60;
         }
 
         if ($count >= $limit) {
             return new WP_Error('tr_rate_limited', 'Too many requests.', [
                 'status' => 429,
-                'headers' => ['Retry-After' => '60'],
+                'headers' => ['Retry-After' => (string) $retry],
             ]);
         }
 
-        set_transient($key, $count + 1, MINUTE_IN_SECONDS);
+        set_transient($key, $count + 1, $window);
         return true;
     }
 

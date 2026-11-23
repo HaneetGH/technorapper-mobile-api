@@ -7,6 +7,11 @@ final class TR_Mobile_API {
     private const MAX_SEARCH_PAGE = 10;
 
     public function register_routes(): void {
+        register_rest_route(TR_MOBILE_API_NAMESPACE, '/auth/challenge', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [$this, 'auth_challenge'],
+            'permission_callback' => [$this, 'permission_auth_bootstrap'],
+        ]);
         register_rest_route(TR_MOBILE_API_NAMESPACE, '/auth/register', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [$this, 'auth_register'],
@@ -15,6 +20,9 @@ final class TR_Mobile_API {
                 'platform' => ['required' => false, 'sanitize_callback' => 'sanitize_key'],
                 'app_version' => ['required' => false, 'sanitize_callback' => 'sanitize_text_field'],
                 'device_label' => ['required' => false, 'sanitize_callback' => 'sanitize_text_field'],
+                'package_name' => ['required' => false, 'sanitize_callback' => 'sanitize_text_field'],
+                'bundle_id' => ['required' => false, 'sanitize_callback' => 'sanitize_text_field'],
+                'nonce' => ['required' => false, 'sanitize_callback' => 'sanitize_text_field'],
             ],
         ]);
         register_rest_route(TR_MOBILE_API_NAMESPACE, '/auth/token', [
@@ -40,9 +48,9 @@ final class TR_Mobile_API {
         ]);
         register_rest_route(TR_MOBILE_API_NAMESPACE, '/home', $read + [
             'callback' => [$this, 'home'],
-            'args' => [
-                'limit' => ['default' => 20, 'sanitize_callback' => 'absint'],
-            ],
+        ]);
+        register_rest_route(TR_MOBILE_API_NAMESPACE, '/pulse', $read + [
+            'callback' => [$this, 'pulse'],
         ]);
         register_rest_route(TR_MOBILE_API_NAMESPACE, '/posts', $read + [
             'callback' => [$this, 'posts'],
@@ -85,6 +93,13 @@ final class TR_Mobile_API {
         return true;
     }
 
+    public function auth_challenge() {
+        $issued = TR_Mobile_App_Lock::issue_challenge();
+        $response = new WP_REST_Response($issued, 200);
+        $response->header('Cache-Control', 'no-store');
+        return $response;
+    }
+
     public function auth_register(WP_REST_Request $request) {
         $created = TR_Mobile_Auth::register_install($request);
         if (is_wp_error($created)) {
@@ -106,6 +121,8 @@ final class TR_Mobile_API {
     }
 
     public function config(): WP_REST_Response {
+        $accept_shared = TR_Mobile_App_Lock::accept_shared_bearer();
+        $require_att = TR_Mobile_App_Lock::require_attestation();
         return new WP_REST_Response([
             'api_version' => 'v1',
             'plugin_version' => TR_MOBILE_API_VERSION,
@@ -114,10 +131,14 @@ final class TR_Mobile_API {
             'features' => [
                 'push_notifications' => false,
                 'search' => true,
+                'pulse' => true,
             ],
             'auth' => [
-                'mode' => 'bearer_mobile_token',
+                'mode' => $accept_shared ? 'shared_or_install' : 'install_jwt',
                 'token_ttl' => TR_Mobile_Auth::token_ttl(),
+                'accept_shared_bearer' => $accept_shared,
+                'require_app_attestation' => $require_att,
+                'challenge_path' => '/' . TR_MOBILE_API_NAMESPACE . '/auth/challenge',
                 'register_path' => '/' . TR_MOBILE_API_NAMESPACE . '/auth/register',
                 'token_path' => '/' . TR_MOBILE_API_NAMESPACE . '/auth/token',
             ],
@@ -128,16 +149,17 @@ final class TR_Mobile_API {
         return new WP_REST_Response(['data' => $this->desk_payload()], 200);
     }
 
-    public function home(WP_REST_Request $request): WP_REST_Response {
-        $limit = $this->clamp_limit((int) $request->get_param('limit'));
-        $posts = $this->query_posts(1, $limit);
+    public function home(): WP_REST_Response {
+        $layout = $this->compose_home_layout();
         return new WP_REST_Response([
-            'data' => [
-                'hero' => array_slice($posts['data'], 0, 1),
-                'latest' => $posts['data'],
-                'desks' => $this->desk_payload(),
-            ],
+            'data' => $layout,
             'meta' => ['generated_at' => gmdate('c')],
+        ], 200);
+    }
+
+    public function pulse(): WP_REST_Response {
+        return new WP_REST_Response([
+            'data' => $this->pulse_payload(),
         ], 200);
     }
 
@@ -285,12 +307,7 @@ final class TR_Mobile_API {
     }
 
     private function desk_payload(): array {
-        $slugs = get_theme_mod('desk_slugs', '');
-        $slugs = array_values(array_filter(array_map('sanitize_title', explode(',', (string) $slugs))));
-        if (!$slugs) {
-            $defaults = ['apple', 'ai', 'android', 'auto', 'pc-and-hardware', 'reviews', 'comics', 'guides', 'news'];
-            $slugs = array_values(array_filter($defaults, fn($slug) => term_exists($slug, 'category')));
-        }
+        $slugs = $this->desk_slugs();
         $items = [];
         foreach ($slugs as $order => $slug) {
             $term = get_term_by('slug', $slug, 'category');
@@ -305,6 +322,220 @@ final class TR_Mobile_API {
             ];
         }
         return $items;
+    }
+
+    /**
+     * @return string[]
+     */
+    private function desk_slugs(): array {
+        $slugs = get_theme_mod('desk_slugs', '');
+        $slugs = array_values(array_filter(array_map('sanitize_title', explode(',', (string) $slugs))));
+        if (!$slugs) {
+            $defaults = ['apple', 'ai', 'android', 'auto', 'pc-and-hardware', 'reviews', 'comics', 'guides', 'news'];
+            $slugs = array_values(array_filter($defaults, fn($slug) => term_exists($slug, 'category')));
+        }
+        return $slugs;
+    }
+
+    /**
+     * Theme-parity home layout with mobile caps: latest≤4, side 2–3, sections≤4/desk.
+     *
+     * @return array{hero:?array,side:array,latest:array,sections:array}
+     */
+    private function compose_home_layout(): array {
+        $query = new WP_Query([
+            'post_type' => 'post',
+            'post_status' => 'publish',
+            'posts_per_page' => 100,
+            'ignore_sticky_posts' => true,
+            'has_password' => false,
+            'no_found_rows' => true,
+        ]);
+        /** @var WP_Post[] $posts */
+        $posts = $query->posts ?: [];
+
+        $desks = $this->desk_payload();
+        $by_slug = [];
+        foreach ($posts as $post) {
+            $cats = get_the_category($post->ID);
+            if (!$cats) {
+                continue;
+            }
+            foreach ($cats as $cat) {
+                $by_slug[$cat->slug][] = $post;
+            }
+        }
+
+        $hero_post = $posts[0] ?? null;
+        $hero_id = $hero_post ? (int) $hero_post->ID : 0;
+
+        $comics_post = null;
+        if (!empty($by_slug['comics'])) {
+            foreach ($by_slug['comics'] as $candidate) {
+                if ((int) $candidate->ID !== $hero_id) {
+                    $comics_post = $candidate;
+                    break;
+                }
+            }
+        }
+
+        $side = [];
+        $side_limit = $comics_post ? 2 : 3;
+        foreach ($desks as $desk) {
+            if (count($side) >= $side_limit) {
+                break;
+            }
+            $slug = (string) ($desk['slug'] ?? '');
+            if ($slug === 'comics' || empty($by_slug[$slug])) {
+                continue;
+            }
+            foreach ($by_slug[$slug] as $candidate) {
+                $candidate_id = (int) $candidate->ID;
+                if ($candidate_id === $hero_id) {
+                    continue;
+                }
+                $already = false;
+                foreach ($side as $picked) {
+                    if ((int) $picked->ID === $candidate_id) {
+                        $already = true;
+                        break;
+                    }
+                }
+                if ($already) {
+                    continue;
+                }
+                $side[] = $candidate;
+                break;
+            }
+        }
+        if ($comics_post) {
+            $side[] = $comics_post;
+        }
+
+        $used = [];
+        if ($hero_post) {
+            $used[$hero_id] = true;
+        }
+        foreach ($side as $post) {
+            $used[(int) $post->ID] = true;
+        }
+
+        $latest = [];
+        foreach ($posts as $post) {
+            $id = (int) $post->ID;
+            if (isset($used[$id])) {
+                continue;
+            }
+            $latest[] = $post;
+            $used[$id] = true;
+            if (count($latest) >= 4) {
+                break;
+            }
+        }
+
+        $sections = [];
+        foreach ($desks as $desk) {
+            $slug = (string) ($desk['slug'] ?? '');
+            $picked = [];
+            if ($slug !== '' && !empty($by_slug[$slug])) {
+                foreach ($by_slug[$slug] as $post) {
+                    $id = (int) $post->ID;
+                    if (isset($used[$id])) {
+                        continue;
+                    }
+                    $picked[] = $post;
+                    $used[$id] = true;
+                    if (count($picked) >= 4) {
+                        break;
+                    }
+                }
+            }
+            if (!$picked) {
+                continue;
+            }
+            $sections[] = [
+                'desk' => [
+                    'id' => (int) ($desk['id'] ?? 0),
+                    'slug' => $slug,
+                    'name' => (string) ($desk['name'] ?? $slug),
+                ],
+                'posts' => array_map(fn($p) => $this->serialize_post($p), $picked),
+            ];
+        }
+
+        return [
+            'hero' => $hero_post ? $this->serialize_post($hero_post) : null,
+            'side' => array_map(fn($p) => $this->serialize_post($p), $side),
+            'latest' => array_map(fn($p) => $this->serialize_post($p), $latest),
+            'sections' => $sections,
+        ];
+    }
+
+    /**
+     * AI Wire queue snapshot (same SQL as theme homepage Pulse). No invented numbers.
+     *
+     * @return array{discovered:int,evaluated:int,published:int,rejected:int,window_days:int,source:string}
+     */
+    private function pulse_payload(): array {
+        $empty = [
+            'discovered' => 0,
+            'evaluated' => 0,
+            'published' => 0,
+            'rejected' => 0,
+            'window_days' => 30,
+            'source' => 'unavailable',
+        ];
+
+        global $wpdb;
+        $items_table = $wpdb->prefix . 'tr_ai_wire_items';
+        $quarantine_table = $wpdb->prefix . 'tr_ai_wire_quarantine';
+
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $items_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($items_table)));
+        if ($items_exists !== $items_table) {
+            return $empty;
+        }
+
+        $since = gmdate('Y-m-d H:i:s', time() - (30 * DAY_IN_SECONDS));
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $stats = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT
+                    COUNT(*) AS discovered,
+                    SUM(CASE WHEN review_json IS NOT NULL AND review_json <> '' THEN 1 ELSE 0 END) AS evaluated,
+                    SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) AS published
+                 FROM {$items_table}
+                 WHERE created_at >= %s",
+                $since
+            ),
+            ARRAY_A
+        );
+
+        $rejected = 0;
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $quarantine_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($quarantine_table)));
+        if ($quarantine_exists === $quarantine_table) {
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $rejected = (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$quarantine_table} WHERE created_at >= %s",
+                    $since
+                )
+            );
+        }
+
+        if (!$stats) {
+            return $empty;
+        }
+
+        return [
+            'discovered' => (int) ($stats['discovered'] ?? 0),
+            'evaluated' => (int) ($stats['evaluated'] ?? 0),
+            'published' => (int) ($stats['published'] ?? 0),
+            'rejected' => $rejected,
+            'window_days' => 30,
+            'source' => 'queue_snapshot',
+        ];
     }
 
     private function clamp_limit(int $limit): int {
