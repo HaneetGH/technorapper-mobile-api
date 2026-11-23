@@ -7,10 +7,24 @@ final class TR_Mobile_API {
     private const MAX_SEARCH_PAGE = 10;
 
     public function register_routes(): void {
+        register_rest_route(TR_MOBILE_API_NAMESPACE, '/auth/register', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [$this, 'auth_register'],
+            'permission_callback' => [$this, 'permission_auth_bootstrap'],
+            'args' => [
+                'platform' => ['required' => false, 'sanitize_callback' => 'sanitize_key'],
+                'app_version' => ['required' => false, 'sanitize_callback' => 'sanitize_text_field'],
+                'device_label' => ['required' => false, 'sanitize_callback' => 'sanitize_text_field'],
+            ],
+        ]);
         register_rest_route(TR_MOBILE_API_NAMESPACE, '/auth/token', [
             'methods' => WP_REST_Server::CREATABLE,
             'callback' => [$this, 'auth_token'],
-            'permission_callback' => [$this, 'permission_issue_token'],
+            'permission_callback' => [$this, 'permission_auth_bootstrap'],
+            'args' => [
+                'install_id' => ['required' => true, 'sanitize_callback' => 'sanitize_text_field'],
+                'install_secret' => ['required' => true, 'sanitize_callback' => 'sanitize_text_field'],
+            ],
         ]);
 
         $read = [
@@ -51,7 +65,7 @@ final class TR_Mobile_API {
         ]);
     }
 
-    public function permission_issue_token(WP_REST_Request $request) {
+    public function permission_auth_bootstrap(WP_REST_Request $request) {
         $rate = TR_Mobile_Rate_Limit::check($request);
         if (is_wp_error($rate)) {
             return $rate;
@@ -69,6 +83,16 @@ final class TR_Mobile_API {
             return $rate;
         }
         return true;
+    }
+
+    public function auth_register(WP_REST_Request $request) {
+        $created = TR_Mobile_Auth::register_install($request);
+        if (is_wp_error($created)) {
+            return $created;
+        }
+        $response = new WP_REST_Response($created, 201);
+        $response->header('Cache-Control', 'no-store');
+        return $response;
     }
 
     public function auth_token(WP_REST_Request $request) {
@@ -93,6 +117,7 @@ final class TR_Mobile_API {
             ],
             'auth' => [
                 'token_ttl' => TR_Mobile_Auth::token_ttl(),
+                'register_path' => '/' . TR_MOBILE_API_NAMESPACE . '/auth/register',
                 'token_path' => '/' . TR_MOBILE_API_NAMESPACE . '/auth/token',
             ],
         ], 200);
@@ -333,7 +358,7 @@ final class TR_Mobile_API {
             }
         }
 
-        if ($status !== 200 || str_contains($route, '/auth/token')) {
+        if ($status !== 200 || str_contains($route, '/auth/')) {
             header('Cache-Control: no-store');
         } else {
             // Authenticated responses: private. Edge may still cache after its own auth rules.
