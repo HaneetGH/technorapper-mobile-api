@@ -2,12 +2,12 @@
 if (!defined('ABSPATH')) exit;
 
 /**
- * Auth flow (simple):
- * Admin clicks Generate → Mobile API Token → app sends Authorization: Bearer <token>
+ * Auth flow (production app-only):
+ * 1) GET /auth/challenge → nonce
+ * 2) POST /auth/register + Play Integrity / App Attest → install_id + install_secret
+ * 3) POST /auth/token → short-lived Bearer with iid claim
  *
- * Optional advanced:
- * 1) POST /auth/register + X-TR-App-Key → install_id + install_secret
- * 2) POST /auth/token → short-lived Bearer with iid claim
+ * Staging: shared Bearer and/or app-key register when accept_shared_bearer / staging IPs allow.
  */
 final class TR_Mobile_Auth {
     public const HEADER_APP_KEY = 'X-TR-App-Key';
@@ -23,7 +23,6 @@ final class TR_Mobile_Auth {
      * Create a new long-lived mobile API token (stored as tr_mobile_app_key).
      */
     public static function generate_mobile_token(): string {
-        // Prefix makes the value recognizable in logs/configs; body is high-entropy.
         $token = 'tr_mob_' . wp_generate_password(40, false, false);
         update_option(self::OPTION_APP_KEY, $token, false);
         return $token;
@@ -33,15 +32,40 @@ final class TR_Mobile_Auth {
      * @return array|WP_Error
      */
     public static function register_install(WP_REST_Request $request) {
-        $gate = self::require_app_key($request);
-        if (is_wp_error($gate)) {
-            return $gate;
+        if (self::configured_app_key() === '') {
+            return self::not_configured();
         }
 
+        $require = TR_Mobile_App_Lock::require_attestation();
+        $staging = $require && TR_Mobile_Attestation::is_staging_ip();
+
+        if ($require && $staging) {
+            $gate = self::require_app_key($request);
+            if (is_wp_error($gate)) {
+                return $gate;
+            }
+        } elseif (!$require) {
+            // Legacy / staging without attestation: still require app key.
+            $gate = self::require_app_key($request);
+            if (is_wp_error($gate)) {
+                return $gate;
+            }
+        }
+        // Production attestation ON: no X-TR-App-Key path (except staging above).
+
+        $lock = TR_Mobile_App_Lock::validate_register($request);
+        if (is_wp_error($lock)) {
+            return $lock;
+        }
+
+        $package = sanitize_text_field((string) ($request->get_param('package_name') ?: $request->get_param('bundle_id') ?: ''));
         $created = TR_Mobile_Installs::register([
             'platform' => (string) $request->get_param('platform'),
             'app_version' => (string) $request->get_param('app_version'),
             'device_label' => (string) $request->get_param('device_label'),
+            'package_name' => $package,
+            'attest_key_id' => (string) $request->get_param('_tr_attest_key_id'),
+            'attest_public_key' => (string) $request->get_param('_tr_attest_public_key'),
         ]);
         if (is_wp_error($created)) {
             return $created;
@@ -80,6 +104,11 @@ final class TR_Mobile_Auth {
             return $verified;
         }
 
+        $attest = TR_Mobile_App_Lock::validate_token_attestation($request, $install_id);
+        if (is_wp_error($attest)) {
+            return $attest;
+        }
+
         $ttl = self::token_ttl();
         $now = time();
         $payload = [
@@ -106,7 +135,6 @@ final class TR_Mobile_Auth {
 
     /**
      * Validate Bearer for content routes. Fail closed if no mobile token configured.
-     * Accepts either the admin-generated long-lived token, or a short-lived install JWT.
      *
      * @return true|WP_Error
      */
@@ -125,12 +153,18 @@ final class TR_Mobile_Auth {
             );
         }
 
-        // Simple path: mobile app uses the token generated in WP admin.
+        // Shared long-lived token — disable in production (app-only / install JWTs).
         if (hash_equals($configured, $token)) {
+            if (!TR_Mobile_App_Lock::accept_shared_bearer()) {
+                return new WP_Error(
+                    'tr_shared_bearer_disabled',
+                    'Shared Mobile API Token is disabled. Use a short-lived install access token.',
+                    ['status' => 401]
+                );
+            }
             return true;
         }
 
-        // Advanced path: short-lived install Bearer (contains iid).
         $payload = self::decode_token($token);
         if (is_wp_error($payload)) {
             return new WP_Error('tr_unauthorized', 'Invalid access token.', ['status' => 401]);
