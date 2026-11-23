@@ -5,12 +5,11 @@ alwaysApply: true
 
 # Mobile API auth
 
-- Content GET routes require `Authorization: Bearer` only. Never accept `X-TR-App-Key` or install secrets on content routes.
-- `POST /auth/register` is the only route that accepts `X-TR-App-Key`. It creates per-install credentials.
-- `POST /auth/token` requires `install_id` + `install_secret` and must embed `iid` in the Bearer payload.
-- Bearer validation must reject revoked/missing installs even if the HMAC token is unexpired.
-- If `tr_mobile_app_key` is empty, the API must fail closed (`503`). Do not restore open-by-default access.
+- Primary UX: admin **Generate Mobile API Token**; mobile uses `Authorization: Bearer <token>` on content GETs.
+- Do not require register/install for the simple path. Keep per-install register/token as optional advanced revoke.
+- If no Mobile API Token (`tr_mobile_app_key`) is set, fail closed (`503`).
+- Content routes never accept raw secrets via query string.
 - Keep page/limit caps (`limit` ≤ 20, posts page ≤ 50, search page ≤ 10).
-- Do not run `the_content` on API bodies; keep `wp_kses_post` (or tighter).
+- Do not run `the_content` on API bodies; keep `wp_kses_post`.
 - Password-protected posts must not appear in list/detail/search.
-- Origin rate limiting is best-effort; Cloudflare is the real DDoS control. Do not claim App Key / install keys make clone apps impossible.
+- Cloudflare is the real DDoS control. Do not claim the shared token makes clone apps impossible.

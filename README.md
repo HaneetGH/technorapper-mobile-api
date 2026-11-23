@@ -2,35 +2,33 @@
 
 First-party WordPress plugin providing the stable, read-only API contract for the TechnoRapper Android/iOS app.
 
-**Version:** 0.3.0
+**Version:** 0.3.1
 
-## Auth (required)
+## Auth (simple — recommended)
 
-The API is **fail-closed**. Set an App Key under **Settings → TR Mobile API** (option `tr_mobile_app_key`). Until then every route returns `503`.
+Like GitHub: **the plugin creates the token**. You copy it into the mobile app.
 
-```text
-1. First launch — register this device/install
-   POST /wp-json/technorapper/v1/auth/register
-   Header: X-TR-App-Key: <app key from official build>
-   Body (optional JSON): { "platform": "android", "app_version": "1.0.0", "device_label": "pixel" }
+1. Activate the plugin.
+2. **Settings → TR Mobile API → Generate Mobile API Token**.
+3. Copy the token into the app.
+4. Call content routes with:
 
-   Response (secret shown once):
-   { "install_id": "inst_…", "install_secret": "…" }
-
-2. Mint short-lived access token
-   POST /wp-json/technorapper/v1/auth/token
-   Body: { "install_id": "inst_…", "install_secret": "…" }
-
-   Response:
-   { "access_token": "…", "token_type": "Bearer", "expires_in": 3600, "install_id": "inst_…" }
-
-3. All content routes
-   Header: Authorization: Bearer <access_token>
+```http
+Authorization: Bearer tr_mob_…
 ```
 
-Store `install_id` + `install_secret` in secure device storage. Revoke any install from **Settings → TR Mobile API**. Do not put WordPress admin passwords in the app.
+Until a token is generated, the API returns `503`.
 
-Cloudflare must still stop DDoS. Per-install keys give investigation and kill-switch control; they do not make reverse‑engineered apps impossible.
+Regenerating the token invalidates the previous one (update the app).
+
+## Optional advanced (per-device)
+
+For revoke-one-phone without rotating the shared token:
+
+1. `POST /auth/register` with `X-TR-App-Key: <same Mobile API Token>`
+2. Store `install_id` + `install_secret`
+3. `POST /auth/token` → short-lived Bearer
+4. Revoke installs in **Settings → TR Mobile API**
 
 ## API
 
@@ -38,45 +36,26 @@ Base path: `/wp-json/technorapper/v1/`
 
 | Method | Path | Auth |
 |--------|------|------|
-| `POST` | `/auth/register` | `X-TR-App-Key` |
-| `POST` | `/auth/token` | `install_id` + `install_secret` |
-| `GET` | `/config` | Bearer |
+| `GET` | `/config` | Bearer (mobile token or install JWT) |
 | `GET` | `/desks` | Bearer |
 | `GET` | `/home?limit=20` | Bearer |
 | `GET` | `/posts?page=1&limit=20&desk=ai` | Bearer |
 | `GET` | `/posts/{id}` | Bearer |
 | `GET` | `/search?q=android&page=1&limit=20` | Bearer |
+| `POST` | `/auth/register` | `X-TR-App-Key` (advanced) |
+| `POST` | `/auth/token` | install credentials (advanced) |
 
-Limits:
+Limits: `limit` ≤ 20; `/posts` page ≤ 50; `/search` page ≤ 10; `q` 2–100 chars.
 
-- `limit` max **20**
-- `/posts` `page` max **50**
-- `/search` `page` max **10**, `q` length **2–100**
-
-Pagination meta: `meta.page`, `meta.limit`, `meta.total`, `meta.pages`, plus headers `X-TR-Page`, `X-TR-Pages`, `X-TR-Total`.
-
-Prefer `api.technorapper.com/v1/` behind Cloudflare rather than raw WordPress URLs in production.
+Prefer `api.technorapper.com/v1/` behind Cloudflare in production.
 
 ## Install
 
-1. Copy into `wp-content/plugins/technorapper-mobile-api` and activate (creates installs table).
-2. **Settings → TR Mobile API** → set App Key (+ optional token TTL / min app version).
-3. Embed the same App Key in the mobile app build (register only).
-4. Verify: register → token → `GET /config` with Bearer.
-
-## Errors
-
-| Code | Status | Meaning |
-|------|--------|---------|
-| `tr_not_configured` | 503 | App key not set |
-| `tr_unauthorized` | 401 | Bad app key, install credentials, or Bearer |
-| `tr_install_revoked` | 401 | Install revoked in admin |
-| `tr_token_expired` | 401 | Refresh via `/auth/token` |
-| `tr_rate_limited` | 429 | Back off (`Retry-After: 60`) |
-| `tr_invalid_query` | 400 | Bad search `q` |
-| `tr_invalid_page` | 400 | Page above max |
-| `tr_not_found` | 404 | Missing / unpublished / password post |
+1. Upload/activate the plugin.
+2. Generate Mobile API Token in settings.
+3. Put the token in the mobile app.
+4. Verify: `GET .../config` with `Authorization: Bearer <token>`.
 
 ## Important
 
-WordPress remains the content origin. Put WAF, bot management, and hard rate limits on Cloudflare. Origin rate limiting is best-effort only.
+WordPress remains the content origin. Cloudflare handles DDoS. The generated token is powerful—treat a leak as regenerate + update the app.

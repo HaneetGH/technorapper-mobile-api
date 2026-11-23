@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TechnoRapper Mobile API
  * Description: Versioned, read-only API for TechnoRapper mobile clients.
- * Version: 0.3.0
+ * Version: 0.3.1
  * Author: TechnoRapper
  * Requires at least: 6.0
  * Requires PHP: 8.1
@@ -11,7 +11,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('TR_MOBILE_API_VERSION', '0.3.0');
+define('TR_MOBILE_API_VERSION', '0.3.1');
 define('TR_MOBILE_API_NAMESPACE', 'technorapper/v1');
 
 require_once __DIR__ . '/includes/class-tr-mobile-installs.php';

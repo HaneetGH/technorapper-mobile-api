@@ -116,6 +116,7 @@ final class TR_Mobile_API {
                 'search' => true,
             ],
             'auth' => [
+                'mode' => 'bearer_mobile_token',
                 'token_ttl' => TR_Mobile_Auth::token_ttl(),
                 'register_path' => '/' . TR_MOBILE_API_NAMESPACE . '/auth/register',
                 'token_path' => '/' . TR_MOBILE_API_NAMESPACE . '/auth/token',

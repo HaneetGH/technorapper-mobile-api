@@ -2,10 +2,12 @@
 if (!defined('ABSPATH')) exit;
 
 /**
- * Auth flow:
- * 1) POST /auth/register + X-TR-App-Key → install_id + install_secret (once)
- * 2) POST /auth/token with install credentials → short-lived Bearer (includes iid)
- * 3) Content GETs require Authorization: Bearer
+ * Auth flow (simple):
+ * Admin clicks Generate → Mobile API Token → app sends Authorization: Bearer <token>
+ *
+ * Optional advanced:
+ * 1) POST /auth/register + X-TR-App-Key → install_id + install_secret
+ * 2) POST /auth/token → short-lived Bearer with iid claim
  */
 final class TR_Mobile_Auth {
     public const HEADER_APP_KEY = 'X-TR-App-Key';
@@ -16,6 +18,16 @@ final class TR_Mobile_Auth {
     private const DEFAULT_TTL = 3600;
     private const MIN_TTL = 300;
     private const MAX_TTL = 86400;
+
+    /**
+     * Create a new long-lived mobile API token (stored as tr_mobile_app_key).
+     */
+    public static function generate_mobile_token(): string {
+        // Prefix makes the value recognizable in logs/configs; body is high-entropy.
+        $token = 'tr_mob_' . wp_generate_password(40, false, false);
+        update_option(self::OPTION_APP_KEY, $token, false);
+        return $token;
+    }
 
     /**
      * @return array|WP_Error
@@ -93,12 +105,14 @@ final class TR_Mobile_Auth {
     }
 
     /**
-     * Validate Bearer token for content routes. Fail closed if app key unset.
+     * Validate Bearer for content routes. Fail closed if no mobile token configured.
+     * Accepts either the admin-generated long-lived token, or a short-lived install JWT.
      *
      * @return true|WP_Error
      */
     public static function authenticate(WP_REST_Request $request) {
-        if (self::configured_app_key() === '') {
+        $configured = self::configured_app_key();
+        if ($configured === '') {
             return self::not_configured();
         }
 
@@ -111,14 +125,20 @@ final class TR_Mobile_Auth {
             );
         }
 
+        // Simple path: mobile app uses the token generated in WP admin.
+        if (hash_equals($configured, $token)) {
+            return true;
+        }
+
+        // Advanced path: short-lived install Bearer (contains iid).
         $payload = self::decode_token($token);
         if (is_wp_error($payload)) {
-            return $payload;
+            return new WP_Error('tr_unauthorized', 'Invalid access token.', ['status' => 401]);
         }
 
         $install_id = (string) ($payload['iid'] ?? '');
         if ($install_id === '') {
-            return new WP_Error('tr_unauthorized', 'Access token missing install claim.', ['status' => 401]);
+            return new WP_Error('tr_unauthorized', 'Invalid access token.', ['status' => 401]);
         }
 
         $active = TR_Mobile_Installs::assert_active($install_id);
@@ -166,7 +186,7 @@ final class TR_Mobile_Auth {
     private static function not_configured(): WP_Error {
         return new WP_Error(
             'tr_not_configured',
-            'Mobile API is not configured. Set tr_mobile_app_key before use.',
+            'Mobile API is not configured. Generate a Mobile API Token under Settings → TR Mobile API.',
             ['status' => 503]
         );
     }
