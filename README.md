@@ -2,7 +2,7 @@
 
 First-party WordPress plugin providing the stable, read-only API contract for the TechnoRapper Android/iOS app.
 
-**Version:** 0.2.0
+**Version:** 0.2.1
 
 ## Auth (required)
 
